@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Image Classification</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>Real-Time Image Classification with Webcam</h1>
+    
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+
+    <div id="result">
+        <h2>Prediction: <span id="prediction"></span></h2>
+        <p>Confidence: <span id="confidence"></span></p>
+    </div>\
+    
+    <script>
+        // Access the webcam
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                document.getElementById('video').srcObject = stream;
+                requestAnimationFrame(predictFromVideo); // Start predicting once video is ready
+            })
+            .catch(err => console.error('Error accessing webcam:', err));
+
+        let alarmTriggered = false;
+        const alarmSound = new Audio('{{ url_for('static', filename='alarm.mp3') }}'); // Ensure you have this file
+
+        let predictionHistory = [];
+        const historySize = 5; // Number of frames to consider for averaging
+
+        function predictFromVideo() {
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            const context = canvas.getContext('2d');
+            const predictionSpan = document.getElementById('prediction');
+            const confidenceSpan = document.getElementById('confidence');
+
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = canvas.toDataURL('image/jpeg');
+
+            fetch('/predict', {
+                method: 'POST',
+                body: JSON.stringify({ image: imageData }),
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    predictionSpan.textContent = 'Error';
+                    confidenceSpan.textContent = data.error;
+                } else {
+                    predictionHistory.push(data.prediction);
+
+                    // Keep history array at the desired size
+                    if (predictionHistory.length > historySize) {
+                        predictionHistory.shift();
+                    }
+
+                    // Determine the most frequent prediction in history
+                    const mostFrequentPrediction = predictionHistory.sort((a, b) =>
+                        predictionHistory.filter(v => v === a).length - 
+                        predictionHistory.filter(v => v === b).length
+                    ).pop();
+
+                    // Display the most frequent prediction
+                    predictionSpan.textContent = mostFrequentPrediction;
+                    confidenceSpan.textContent = data.confidence.toFixed(2);
+
+                    // Alarm logic based on averaged prediction
+                    if (mostFrequentPrediction === 'Turn' || mostFrequentPrediction === 'Text') {
+                        if (!alarmTriggered) {
+                            alarmSound.loop = true;
+                            alarmSound.play();
+                            alarmTriggered = true;
+                        }
+                    } else {
+                        if (alarmTriggered) {
+                            alarmSound.pause();
+                            alarmSound.currentTime = 0;
+                            alarmTriggered = false;
+                        }
+                    }
+                }
+            })
+            .catch(err => console.error('Error sending image to server:', err));
+
+            requestAnimationFrame(predictFromVideo);
+        }
+    </script>
+</body>
+</html>
